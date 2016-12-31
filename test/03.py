@@ -7,3 +7,5 @@ DOCSTRING
 '''
 
 name="STRING"
+test=""
+

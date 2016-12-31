@@ -80,7 +80,7 @@ def convert(parser, filename):
             code = [line.rstrip() for line in f.readlines()]
 
         debug(4, "parse: %s" % filename)
-        parser.parse(code)
+        parser.parse(filename)
     except Exception as err:
         if opts.check:
             result = 1
@@ -167,5 +167,5 @@ def main():
         convert(parser, fname)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

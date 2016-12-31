@@ -86,13 +86,15 @@ class Notebook():
 
             content += ", \n" + self.indent * 3 + "\"source\": [\n"
 
-        content += self.indent * 4 + "\"" + str(line)
-
         if line is None:
             content = "\"\n" 
             content += self.indent * 3 + "]\n" + self.indent * 2 + "}" + "\n"
             content += self.nb_end()
+        else:
+            line = line.replace('"', '\\\"')
+            content += self.indent * 4 + "\"" + str(line)
 
+        self.debug(2, " %19s line: '%s'" % (" ", line))
         #
         self.isfirstcell = False
 

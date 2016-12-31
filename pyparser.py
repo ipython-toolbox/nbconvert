@@ -938,9 +938,21 @@ class Parser(NodeVisitor):
 
         self.signature(node)
 
-    def parse(self, code):
+    def parse(self, filename):
         self.debug(1)
-        self.code = [line.rstrip() for line in code]
+
+        ignoreLine=False
+        with open(filename) as f:
+            self.code = []
+
+            for line in f.readlines():
+                if line[0:2] == '#!':
+                    ignoreLine = True
+                elif ignoreLine and line.strip() == "":
+                    pass
+                else:
+                    self.code.append(line.rstrip())
+                    ignoreLine = False
 
         tree = ast.parse(os.linesep.join(self.code))
         self.visit(tree)
