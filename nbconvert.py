@@ -1,18 +1,17 @@
 #!/usr/local/bin/python3
 
+from argparse import ArgumentParser as ArgParser
+
 import os
 import sys
 import inspect
 
-import ast
+import pyparser
+import pynotebook 
 
-import pyparser as pyparser
-
-from argparse import ArgumentParser as ArgParser
 
 debuglevel = 0
-
-opts=None
+opts = None
 
 def debug(level, line):
     '''
@@ -20,30 +19,36 @@ def debug(level, line):
     '''
 
     call = inspect.stack()[1][3]
-    this = inspect.stack()[0][3]
 
     if level <= debuglevel:
         print("DBG: %-10s %1d/%1d %s" % (call, level, debuglevel, line))
 
 
+def version():
+    '''
+    print current version string
+    '''
+    print("%s: Version 1.0.0" % __file__)
+    sys.exit(0)
+
+
 def parse_arguments():
+    '''
+    Parse command line arguments
+    '''
     parser = ArgParser()
 
     parser.add_argument("files", nargs="*")
     # parser.add_argument('--file',  action='store')
-    
-    parser.add_argument('--output', action='store')
+
+    parser.add_argument('--output', action='store', nargs="?", default="")
     parser.add_argument('--debug',  action='store', type=int, default=0)
-
     parser.add_argument('--dir',    action='store', type=str, default=".")
-
     parser.add_argument('--version', action='store_true')
-
     parser.add_argument('--details', action='store_true')
-    
-    parser.add_argument('--verbose', dest="verbose", action='store_true', default=True)
+    parser.add_argument('--verbose', dest="verbose",
+                        action='store_true', default=True)
     parser.add_argument('--quiet', dest="verbose", action='store_false')
-    
     parser.add_argument('--check', action='store_true')
 
     opts = parser.parse_args()
@@ -51,31 +56,30 @@ def parse_arguments():
     # Print the version and exit
     if opts.version:
         version()
-        sys.exit(0)
 
     if opts.check:
-        opts.verbose=False
+        opts.verbose = False
 
-    #if opts.file:
+    # if opts.file:
     #    opts.files.append(opts.file)
 
-    #
     global debuglevel
     debuglevel = opts.debug
 
     return opts
 
-def convert(parser, file):
+
+def convert(parser, filename):
     global opts
 
     code = ""
     result = 0
     try:
-        debug(4, "read file: %s" % file)
-        with open(file) as f:
-            code = f.readlines()
+        debug(4, "read file: %s" % filename)
+        with open(filename) as f:
+            code = [line.rstrip() for line in f.readlines()]
 
-        debug(4, "parse: %s" % file)
+        debug(4, "parse: %s" % filename)
         parser.parse(code)
     except Exception as err:
         if opts.check:
@@ -83,29 +87,64 @@ def convert(parser, file):
             print("Unexpected error:", err)
         else:
             raise err
-            
-    if opts.check:   
+
+    if opts.check:
         if result == 0:
-            print("PARSE: %s" % file)
+            print("PARSE: %s" % filename)
         else:
-            print("ERROR: parsing %s" % file)
+            print("ERROR: parsing %s" % filename)
+
+        sys.exit()
+
+    if opts.details:
+        print("Code:" + '-' * 75)
+        for lineno, line in enumerate(code):
+            print("%4d: %s" % (lineno, line))
+
+        print("Result:" + '-' * 73)
+        print(''.join(parser.result))
+
+        print("Lines:" + '-' * 74)
+        for key in parser.lines:
+            print(key, parser.lines[key])
+
+    notebook = pynotebook.Notebook(debuglevel=debuglevel)
+
+    isLastLine = False
+
+    output = opts.output
+    if opts.output == None:
+        output = filename[:-3] + '.ipynb'
+        f_out=open(output, 'w')
+    elif opts.output != "":
+        f_out=open(output, 'w')
     else:
-        if opts.details:
-            print("Code:")
-            for lineno, line in enumerate(code):
-                print("%4d: %s" % (lineno, line))
-
-            print("Result:")
-            print(''.join(parser.result))
-
-            print("Lines:")
-            print(parser.lines)
-
-        print("Source")
-        parser.source()
+        f_out=sys.stdout
         
+    debug(1, "convert %s to %s" % (filename, output))
+
+    for line in parser.notebook():
+        if line is None:
+            debug(2, "last line:")
+        
+            f_out.write(notebook.cell("1", celltype, line))
+        else:
+            (_lineno, _line, change, celltype) = line
+
+            if change:
+                prefix=celltype
+            else:
+                prefix="-"
+
+            debug(4, "%4s: change: %s prefix: %s %-60s" % (_lineno, change, prefix, _line))
+
+            f_out.write(notebook.cell(change, celltype, _line))
+
 
 def main():
+    '''
+    main programm
+    '''
     global opts
     opts = parse_arguments()
 
@@ -120,11 +159,12 @@ def main():
 
     debug(4, "files: %r" % files)
 
+    #
     debug(4, "create parser")
     parser = pyparser.Parser(debuglevel=debuglevel)
 
-    for file in opts.files:
-        convert(parser, file)
+    for fname in opts.files:
+        convert(parser, fname)
 
 
 if __name__ == "__main__":

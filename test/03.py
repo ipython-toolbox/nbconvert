@@ -1,8 +1,9 @@
+#!/usr/local/bin/python3
+
 import os
+
 '''
 DOCSTRING
 '''
 
-# COMMENT
-
-sys.exit(0)
+name="STRING"

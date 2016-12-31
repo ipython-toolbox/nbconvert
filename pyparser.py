@@ -52,6 +52,9 @@ UNARYOP_SYMBOLS[Not] = 'not'
 UNARYOP_SYMBOLS[UAdd] = '+'
 UNARYOP_SYMBOLS[USub] = '-'
 
+KEY_CLASS_COUNT = "#class"
+KEY_FUNC_COUNT = "#func"
+
 PYTHON_ELEMENTS = {
           "class_enter": 1
         , "class_exit": 1
@@ -60,6 +63,9 @@ PYTHON_ELEMENTS = {
         , "func_enter": 1
         , "func_exit": 1
         , "functiondef": 1
+
+        , KEY_CLASS_COUNT: 0
+        , KEY_FUNC_COUNT: 0
 
         , "assert" : 0
         , "alias": 0
@@ -124,6 +130,8 @@ class Parser(NodeVisitor):
     `node_to_source` function.
     """
 
+    (STATE_IGNORE, STATE_ENTER, STATE_EXIT) = [ "ignore", "enter", "exit" ] # range(3)
+
     debuglevel = 0
     lineno = -1
 
@@ -132,11 +140,8 @@ class Parser(NodeVisitor):
     lines = {}
     result = []
 
-    (STATE_IGNORE, STATE_ENTER, STATE_EXIT) = [ "ignore", "enter", "exit" ] # range(3)
-
-    in_code = False
-    in_classdef = False
-    in_funcdef = False
+    in_classdef = 0
+    in_funcdef = 0
 
     def __init__(self, indent_with=' ' * 4, add_line_information=False, debuglevel=4):
         self.result = []
@@ -148,7 +153,6 @@ class Parser(NodeVisitor):
         self.indentation = 0
         self.new_lines = 0
 
-    
     def debug(self, level, line=""):
         call = inspect.stack()[1][3]
         this = inspect.stack()[0][3] 
@@ -158,7 +162,7 @@ class Parser(NodeVisitor):
 
     def setstate(self, state, level=9, node=None, lineno=None, line=""):
         call = inspect.stack()[1][3]
-        this = inspect.stack()[0][3]
+        # this = inspect.stack()[0][3]
         key = call.replace('visit_', '').lower()
         val = PYTHON_ELEMENTS[key]
 
@@ -181,58 +185,72 @@ class Parser(NodeVisitor):
             if self.has_func_exit:
                 self.state["func_exit"] = 1
 
-        if lineno != None:
+        if not lineno is None:
             self.lineno = lineno
         else:
             lineno = -1
-            if node == None:
+            if node is None:
                 pass
             elif hasattr(node, 'lineno'):
                 self.lineno = node.lineno -1
 
-        flags = [key for key in self.state.keys() if PYTHON_ELEMENTS[key] == 1]
+        nodetype=""
+        if not node is None:
+            nodetype=type(node)
+
+        #
+        self.state[KEY_CLASS_COUNT] = self.in_classdef
+        self.state[KEY_FUNC_COUNT] = self.in_funcdef
+
+        #
+        flags = [key for key in self.state.keys() if PYTHON_ELEMENTS[key] == 1 or key in [ KEY_CLASS_COUNT, KEY_FUNC_COUNT ]]
 
         if level <= self.debuglevel:
-            print("LOG: line=%-4d / %-4d s=%-6s v=%s k=%-20s %r stack=%s" % (
+            if  level > 8:
+                _stack=','.join(self.stack)
+                _flags=flags
+            else:
+                _stack=""
+                _flags=""
+            print("LOG: node=%-30s line=%-4d / %-4d s=%-6s v=%s k=%-20s f=%r stack=%s" % (
+                nodetype,
                 self.lineno, lineno, 
                 state, val, key, 
-                flags,
-                ','.join(self.stack)
+                _flags,
+                _stack
             ))
-            
+
         if val == 1:
             self.lines[self.lineno] = flags
 
-        self.debug(3, "f=%r s=%r" % (flags, state))
+        self.debug(8, "f=%r s=%r" % (flags, state))
 
         # handle STATE_ENTER
         if "func_enter" in self.state and key == "body":
-            self.debug(3, "remove func_enter")
             del self.state["func_enter"]
-            
 
         if "class_enter" in self.state and key == "body":
-            self.debug(3, "remove class_enter")
             del self.state["class_enter"]
 
         # handle STATE_EXIT
         if state == self.STATE_EXIT:
             if "func_exit" in self.state:
-                self.debug(3, "remove func_exit")
                 del self.state["func_exit"]
 
                 self.has_func_exit = True
-            
+
             if "class_exit" in self.state:
-                self.debug(3, "remove class_exit")
                 del self.state["class_exit"]
 
             if key in self.state:
                 del self.state[key]
-        
-        self.debug(3, "f=%r s=%r" % (flags, state))
+
+        self.debug(8, "f=%r s=%r" % (flags, state))
 
     def push(self):
+        '''
+        -
+        '''
         call = inspect.stack()[1][3]
         this = inspect.stack()[0][3]
         key = call.replace('visit_', '').lower()
@@ -360,6 +378,7 @@ class Parser(NodeVisitor):
 
     def visit_FunctionDef(self, node):
         self.push()
+        self.in_funcdef += 1
         self.setstate(self.STATE_ENTER, level=2, node=node)
 
         self.newline(extra=1)
@@ -374,11 +393,13 @@ class Parser(NodeVisitor):
         self.newline()
 
         self.setstate(self.STATE_EXIT, level=2, lineno=self.lineno)
+        self.in_funcdef -= 1
         self.pop()
         
     def visit_ClassDef(self, node):
         self.push()
-        self.setstate(self.STATE_ENTER, level=2, node=node, line="CLASSDEF: " + node.name)
+        self.in_classdef += 1
+        self.setstate(self.STATE_ENTER, level=2, node=node)
 
         have_args = []
 
@@ -392,9 +413,7 @@ class Parser(NodeVisitor):
         self.newline(extra=2)
         self.decorators(node)
         self.newline(node)
-        
-        self.write("### +CLASSDEF", append_newline=True)
-        
+
         self.write('class %s' % node.name)
 
         for base in node.bases:
@@ -424,9 +443,8 @@ class Parser(NodeVisitor):
         self.write(have_args and '):' or ':')
         self.body(node.body)
 
-        self.write("### -CLASSDEF: " + str(self.lineno), append_newline=True)
-
-        self.setstate(self.STATE_EXIT, 2, node=node, lineno=self.lineno, line="CLASSDEF: DONE")
+        self.setstate(self.STATE_EXIT, 2, node=node, lineno=self.lineno)
+        self.in_classdef -= 1
         self.pop()
 
     def body_or_else(self, node):
@@ -801,15 +819,17 @@ class Parser(NodeVisitor):
         self.pop()
 
     def visit_ExtSlice(self, node):
-        self.setstate(self.STATE_ENTER, 4, node=node)
+        self.setstate(self.STATE_ENTER, node=node)
 
-        for idx, item in node.dims:
+        for idx, item in enumerate(node.dims):
             if idx:
                 self.write(', ')
             self.visit(item)
 
+        self.setstate(self.STATE_EXIT, node=node)
+
     def visit_Yield(self, node):
-        self.setstate(self.STATE_ENTER, 4, node=node)
+        self.setstate(self.STATE_ENTER, node=node)
 
         self.write('yield ')
 
@@ -817,7 +837,7 @@ class Parser(NodeVisitor):
             self.visit(node.value)
 
     def visit_Lambda(self, node):
-        self.setstate(self.STATE_ENTER, 4, node=node)
+        self.setstate(self.STATE_ENTER, node=node)
 
         self.write('lambda ')
         self.visit(node.args)
@@ -925,25 +945,69 @@ class Parser(NodeVisitor):
         tree = ast.parse(os.linesep.join(self.code))
         self.visit(tree)
 
-    def source(self):
+    def notebook(self):
+        self.debug(1)
+
+        currCx=0
+        currFx=0
+
+        lastCx=0
+        lastFx=0
+
+        lastType="M"
+
         for lineno,line in enumerate(self.code):
+            tags=""
+            inClass="__"
+            inFunc="__"
+            currType="M"
+
             if lineno in self.lines:
-                tags=self.lines[lineno]
-            else:
-                tags=''
+                tags = self.lines[lineno]
+
+                if line.strip() in ["'''", '"""']:
+                    currType="M"
+                else:
+                    currType="C"
 
             if "class_enter" in tags:
-                C="C+"
+                inClass="C+"
             elif "class_exit" in tags:
-                C="C-"
-            else:
-                C="  "
-                
+                inClass="C-"
+
             if "func_enter" in tags:
-                F="F+"
+                inFunc="F+"
             elif "func_exit" in tags:
-                F="F-"
+                inFunc="F-"
+
+            if "class_enter" in tags:
+                currCx += 1
+
+            if "func_enter" in tags:
+                currFx += 1
+
+            if currCx > 0 or currFx > 0:
+                currType="C"
+
+            if lineno == 0:
+                change = 1
+            elif currCx > 0 and lastCx != 0:
+                change = 0 
+            elif currFx == lastFx and currType == lastType:
+                change = 0
             else:
-                F="  " 
-                
-            print("%4d: %s %s %-40s %s" % (lineno, C, F, line, tags))
+                change = 1
+
+            yield (lineno, line, change, currType)
+
+            if "class_exit" in tags:
+                currCx -= 1
+
+            if "func_exit" in tags:
+                currFx -= 1
+
+            lastCx = currCx
+            lastFx = currFx
+            lastType = currType
+
+        yield None
